@@ -1,154 +1,160 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ProgressBarAndroid, ProgressViewIOS, Platform } from 'react-native';
-import { ref, onValue, set } from 'firebase/database';
-import { database } from '../config/firebase';
-import * as Haptics from 'expo-haptics';
+import React from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  ScrollView,
+  Dimensions
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import { updatePetState } from '../services/CoupleDataService';
+import { serverTimestamp } from 'firebase/firestore';
+
+const { width } = Dimensions.get('window');
+
+const COLORS = {
+  background: '#121212',
+  surface: '#1E1E1E',
+  primary: '#FF4B72',
+  text: '#FFFFFF',
+  textSec: '#A0A0A0',
+  success: '#4CAF50'
+};
+
+const PetStatus = ({ label, value, icon, color }) => (
+  <View style={styles.statusItem}>
+    <View style={styles.statusHeader}>
+      <Ionicons name={icon} size={18} color={color} />
+      <Text style={styles.statusLabel}>{label}</Text>
+      <Text style={styles.statusValue}>{value}%</Text>
+    </View>
+    <View style={styles.progressBarBg}>
+      <View style={[styles.progressBarFill, { width: `${value}%`, backgroundColor: color }]} />
+    </View>
+  </View>
+);
 
 export default function PetScreen() {
-  const [petData, setPetData] = useState({ state: 'normal', hunger: 50, happiness: 50 });
-  const petRef = ref(database, 'couple_data/pet');
+  const { coupleId, coupleData } = useAuth();
+  const pet = coupleData?.virtualPet || { name: 'Mochi', hungerLevel: 50, happinessLevel: 50 };
+  const anniversaries = coupleData?.anniversaries || [];
 
-  useEffect(() => {
-    const unsubscribe = onValue(petRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        setPetData(data);
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const updatePet = (hungerDelta, happinessDelta) => {
-    let newHunger = Math.min(100, Math.max(0, petData.hunger + hungerDelta));
-    let newHappy = Math.min(100, Math.max(0, petData.happiness + happinessDelta));
-    
-    let newState = 'normal';
-    if (newHunger < 30) newState = 'hungry';
-    if (newHappy > 80 && newHunger > 50) newState = 'happy';
-    if (newHappy < 30) newState = 'sad';
-
-    set(petRef, {
-      ...petData,
-      hunger: newHunger,
-      happiness: newHappy,
-      state: newState,
-      lastUpdate: Date.now()
+  const handleFeed = async () => {
+    const newHunger = Math.min(100, pet.hungerLevel + 20);
+    await updatePetState(coupleId, {
+      ...pet,
+      hungerLevel: newHunger,
+      lastFed: serverTimestamp()
     });
   };
 
-  const feedPet = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    updatePet(20, 5);
+  const handlePet = async () => {
+    const newHappy = Math.min(100, pet.happinessLevel + 10);
+    await updatePetState(coupleId, {
+      ...pet,
+      happinessLevel: newHappy
+    });
   };
-
-  const playPet = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    updatePet(-10, 20); // Playing makes them hungry but happier
-  };
-
-  const getPetEmoji = () => {
-    switch(petData.state) {
-      case 'happy': return '🐶✨';
-      case 'sad': return '🙍‍♂️🐶';
-      case 'hungry': return '🐶🍖';
-      default: return '🐶';
-    }
-  };
-
-  const ProgressBar = ({ label, value, color }) => (
-    <View style={styles.progressContainer}>
-      <Text style={styles.progressLabel}>{label}</Text>
-      {Platform.OS === 'ios' ? (
-        <ProgressViewIOS style={styles.bar} progress={value / 100} progressTintColor={color} trackTintColor="#eee" />
-      ) : (
-        <ProgressBarAndroid style={styles.bar} styleAttr="Horizontal" indeterminate={false} progress={value / 100} color={color} />
-      )}
-    </View>
-  );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.petEmoji}>{getPetEmoji()}</Text>
-      <Text style={styles.petStatus}>Your pet is {petData.state}!</Text>
-
-      <View style={styles.statsCard}>
-        <ProgressBar label="Hunger" value={petData.hunger} color="#ffb703" />
-        <ProgressBar label="Happiness" value={petData.happiness} color="#ff4d6d" />
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Our Little One</Text>
       </View>
 
-      <View style={styles.actionButtons}>
-        <TouchableOpacity style={[styles.button, {backgroundColor: '#ffb703'}]} onPress={feedPet}>
-          <Text style={styles.buttonText}>Feed 🍖</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={[styles.button, {backgroundColor: '#ff4d6d'}]} onPress={playPet}>
-          <Text style={styles.buttonText}>Play 🎾</Text>
-        </TouchableOpacity>
+      <View style={styles.petCard}>
+         <View style={styles.petImageContainer}>
+            <Ionicons name="paw" size={80} color={COLORS.primary} />
+            <Text style={styles.petName}>{pet.name}</Text>
+         </View>
+
+         <View style={styles.statusContainer}>
+            <PetStatus label="Hunger" value={pet.hungerLevel} icon="restaurant" color="#FFA000" />
+            <PetStatus label="Happiness" value={pet.happinessLevel} icon="heart" color={COLORS.primary} />
+         </View>
+
+         <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.actionBtn} onPress={handleFeed}>
+               <Ionicons name="pizza" size={24} color="#FFF" />
+               <Text style={styles.actionBtnText}>Feed</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#4C8BF5' }]} onPress={handlePet}>
+               <Ionicons name="hand-right" size={24} color="#FFF" />
+               <Text style={styles.actionBtnText}>Pet</Text>
+            </TouchableOpacity>
+         </View>
       </View>
-    </View>
+
+      <View style={styles.sectionHeader}>
+         <Text style={styles.sectionTitle}>Anniversaries</Text>
+         <TouchableOpacity>
+            <Ionicons name="add-circle" size={24} color={COLORS.primary} />
+         </TouchableOpacity>
+      </View>
+
+      {anniversaries.length > 0 ? (
+        anniversaries.map((ann, index) => (
+          <View key={index} style={styles.anniversaryCard}>
+             <View style={styles.annIcon}>
+                <Ionicons name="calendar" size={24} color={COLORS.primary} />
+             </View>
+             <View style={styles.annInfo}>
+                <Text style={styles.annTitle}>{ann.title}</Text>
+                <Text style={styles.annDate}>{ann.date}</Text>
+             </View>
+          </View>
+        ))
+      ) : (
+        <View style={styles.emptyAnn}>
+           <Text style={styles.emptyText}>Add your first shared milestone!</Text>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 20, paddingTop: 60 },
+  header: { marginBottom: 24 },
+  headerTitle: { color: '#FFF', fontSize: 28, fontWeight: 'bold' },
+  petCard: { backgroundColor: COLORS.surface, borderRadius: 24, padding: 24, alignItems: 'center' },
+  petImageContainer: { alignItems: 'center', marginBottom: 24 },
+  petName: { color: '#FFF', fontSize: 24, fontWeight: 'bold', marginTop: 12 },
+  statusContainer: { width: '100%', marginBottom: 24 },
+  statusItem: { marginBottom: 16 },
+  statusHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  statusLabel: { color: COLORS.textSec, marginLeft: 8, flex: 1 },
+  statusValue: { color: '#FFF', fontWeight: 'bold' },
+  progressBarBg: { height: 8, backgroundColor: '#333', borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', borderRadius: 4 },
+  actionRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-between' },
+  actionBtn: { 
+    flex: 0.48, 
+    flexDirection: 'row', 
+    backgroundColor: COLORS.success, 
+    padding: 12, 
+    borderRadius: 12, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  actionBtnText: { color: '#FFF', fontWeight: 'bold', marginLeft: 8 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16 },
+  sectionTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
+  anniversaryCard: { 
+    backgroundColor: COLORS.surface, 
+    padding: 16, 
+    borderRadius: 16, 
+    flexDirection: 'row', 
     alignItems: 'center',
-    backgroundColor: '#fffcfc',
+    marginBottom: 12
   },
-  petEmoji: {
-    fontSize: 120,
-    marginBottom: 20,
-  },
-  petStatus: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 40,
-    textTransform: 'capitalize',
-  },
-  statsCard: {
-    width: '80%',
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    marginBottom: 40,
-  },
-  progressContainer: {
-    marginBottom: 15,
-  },
-  progressLabel: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 5,
-    fontWeight: '600',
-  },
-  bar: {
-    transform: [{ scaleY: 2 }],
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 20,
-  },
-  button: {
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  }
+  annIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center' },
+  annInfo: { marginLeft: 16 },
+  annTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  annDate: { color: COLORS.textSec, fontSize: 13, marginTop: 2 },
+  emptyAnn: { padding: 20, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: COLORS.border, borderRadius: 16 },
+  emptyText: { color: COLORS.textSec }
 });

@@ -1,220 +1,214 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, KeyboardAvoidingView, Platform, Animated } from 'react-native';
-import { ref, push, onValue, serverTimestamp } from 'firebase/database';
-import { database } from '../config/firebase';
-import { useAuth } from '../contexts/AuthContext';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  TextInput, 
+  TouchableOpacity, 
+  KeyboardAvoidingView, 
+  Platform,
+  Animated,
+  Dimensions
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '../contexts/AuthContext';
+import { sendMessage, subscribeToMessages } from '../services/CoupleDataService';
 
-export default function ChatScreen() {
-  const { currentUser } = useAuth();
-  const [messages, setMessages] = useState([]);
-  const [inputText, setInputText] = useState('');
-  const [showMissYou, setShowMissYou] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+const { width, height } = Dimensions.get('window');
 
-  // Assuming a static shared "couple_chat" node for now
-  const chatRef = ref(database, 'couple_chat/messages');
+const COLORS = {
+  background: '#121212',
+  surface: '#1E1E1E',
+  primary: '#FF4B72',
+  text: '#FFFFFF',
+  textSec: '#A0A0A0',
+  bubbleMe: '#FF4B72',
+  bubbleOther: '#2A2A2A',
+};
+
+const HeartEffect = ({ active, onComplete }) => {
+  const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const unsubscribe = onValue(chatRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const messageList = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        // Sort messages
-        messageList.sort((a, b) => a.timestamp - b.timestamp);
-        setMessages(messageList.reverse());
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const sendMessage = async () => {
-    if (inputText.trim() === '') return;
-    
-    await push(chatRef, {
-      text: inputText,
-      senderId: currentUser?.uid || 'unknown',
-      timestamp: serverTimestamp()
-    });
-    
-    setInputText('');
-  };
-
-  const triggerMissYou = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setShowMissYou(true);
-    Animated.sequence([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true,
-      }),
-      Animated.delay(2000),
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 500,
-        useNativeDriver: true,
-      })
-    ]).start(() => setShowMissYou(false));
-
-    // Send a system message
-    push(chatRef, {
-      text: "💖 I Miss You!",
-      senderId: currentUser?.uid || 'unknown',
-      isSystem: true,
-      timestamp: serverTimestamp()
-    });
-  };
-
-  const renderItem = ({ item }) => {
-    const isMe = item.senderId === currentUser?.uid;
-    if (item.isSystem) {
-      return <Text style={styles.systemMessage}>{item.text}</Text>;
+    if (active) {
+      Animated.sequence([
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(anim, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        })
+      ]).start(() => onComplete());
     }
+  }, [active]);
 
+  if (!active) return null;
+
+  return (
+    <Animated.View style={[styles.effectContainer, { opacity: anim }]}>
+       <Ionicons name="heart" size={120} color={COLORS.primary} />
+       <Text style={styles.effectText}>I Miss You!</Text>
+    </Animated.View>
+  );
+};
+
+export default function ChatScreen() {
+  const { currentUser, coupleId } = useAuth();
+  const [messages, setMessages] = useState([]);
+  const [inputText, setInputText] = useState('');
+  const [isEffectActive, setIsEffectActive] = useState(false);
+  const flatListRef = useRef(null);
+
+  useEffect(() => {
+    if (coupleId) {
+      const unsubscribe = subscribeToMessages(coupleId, (newMessages) => {
+        setMessages(newMessages);
+        
+        // Listen for new "miss_you_ping" from partner
+        const lastMsg = newMessages[newMessages.length - 1];
+        if (lastMsg && lastMsg.senderId !== currentUser.uid && lastMsg.effectTrigger === 'miss_you_ping') {
+           triggerLocalEffect();
+        }
+      });
+      return unsubscribe;
+    }
+  }, [coupleId]);
+
+  const triggerLocalEffect = () => {
+    setIsEffectActive(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const handleSend = async () => {
+    if (inputText.trim() === '') return;
+    const text = inputText;
+    setInputText('');
+    await sendMessage(coupleId, currentUser.uid, text);
+  };
+
+  const handleMissYou = async () => {
+    await sendMessage(coupleId, currentUser.uid, "💖 Sent a Miss You ping!", 'miss_you_ping');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+  };
+
+  const renderMessage = ({ item }) => {
+    const isMe = item.senderId === currentUser.uid;
     return (
-      <View style={[styles.messageBubble, isMe ? styles.myMessage : styles.theirMessage]}>
-        <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
-          {item.text}
-        </Text>
+      <View style={[styles.messageWrapper, isMe ? styles.alignRight : styles.alignLeft]}>
+        <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
+          <Text style={styles.messageText}>{item.text}</Text>
+        </View>
       </View>
     );
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={90}
-    >
-      {showMissYou && (
-        <Animated.View style={[styles.missYouOverlay, { opacity: fadeAnim }]}>
-          <Text style={styles.missYouText}>💖 I MISS YOU 💖</Text>
-        </Animated.View>
-      )}
+    <View style={styles.container}>
+      <HeartEffect active={isEffectActive} onComplete={() => setIsEffectActive(false)} />
+      
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Private Chat</Text>
+      </View>
 
       <FlatList
+        ref={flatListRef}
         data={messages}
         keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        inverted // Flips the list so new messages are at the bottom visually
+        renderItem={renderMessage}
         contentContainerStyle={styles.listContent}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
-      
-      <View style={styles.inputContainer}>
-        <TouchableOpacity style={styles.missYouButton} onPress={triggerMissYou}>
-          <Text style={styles.missYouButtonText}>💖</Text>
-        </TouchableOpacity>
-        
-        <TextInput
-          style={styles.input}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Type a message..."
-          placeholderTextColor="#999"
-        />
-        
-        <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-          <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={90}
+      >
+        <View style={styles.inputArea}>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleMissYou}>
+             <Ionicons name="heart" size={28} color={COLORS.primary} />
+          </TouchableOpacity>
+          
+          <TextInput
+            style={styles.input}
+            placeholder="Type a sweet message..."
+            placeholderTextColor={COLORS.textSec}
+            value={inputText}
+            onChangeText={setInputText}
+            multiline
+          />
+
+          <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+             <Ionicons name="send" size={24} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fffcfc',
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { 
+    height: 90, 
+    justifyContent: 'flex-end', 
+    alignItems: 'center', 
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222'
   },
-  listContent: {
-    padding: 15,
+  headerTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  listContent: { padding: 16, paddingBottom: 32 },
+  messageWrapper: { marginBottom: 12, maxWidth: '80%' },
+  alignRight: { alignSelf: 'flex-end' },
+  alignLeft: { alignSelf: 'flex-start' },
+  bubble: { padding: 12, borderRadius: 20 },
+  bubbleMe: { backgroundColor: COLORS.bubbleMe, borderBottomRightRadius: 4 },
+  bubbleOther: { backgroundColor: COLORS.bubbleOther, borderBottomLeftRadius: 4 },
+  messageText: { color: '#FFF', fontSize: 16 },
+  inputArea: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 12, 
+    backgroundColor: COLORS.surface,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 12
   },
-  messageBubble: {
-    padding: 12,
-    borderRadius: 20,
-    marginBottom: 10,
-    maxWidth: '80%',
-  },
-  myMessage: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#ff4d6d',
-    borderBottomRightRadius: 5,
-  },
-  theirMessage: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#eee',
-    borderBottomLeftRadius: 5,
-  },
-  messageText: {
-    fontSize: 16,
-  },
-  myMessageText: {
-    color: '#fff',
-  },
-  theirMessageText: {
-    color: '#333',
-  },
-  systemMessage: {
-    alignSelf: 'center',
-    color: '#ff4d6d',
-    fontWeight: 'bold',
-    marginVertical: 10,
-    fontStyle: 'italic',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    padding: 10,
-    borderTopWidth: 1,
-    borderColor: '#eee',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  missYouButton: {
-    padding: 10,
-    marginRight: 5,
-    backgroundColor: '#ffe5ec',
-    borderRadius: 20,
-  },
-  missYouButtonText: {
-    fontSize: 20,
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 20,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    fontSize: 16,
+  input: { 
+    flex: 1, 
+    backgroundColor: '#2A2A2A', 
+    borderRadius: 20, 
+    paddingHorizontal: 16, 
+    paddingVertical: 8, 
+    color: '#FFF',
     maxHeight: 100,
+    marginHorizontal: 8
   },
-  sendButton: {
-    marginLeft: 10,
-    backgroundColor: '#ff4d6d',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
+  actionBtn: { padding: 4 },
+  sendBtn: { 
+    backgroundColor: COLORS.primary, 
+    width: 44, 
+    height: 44, 
+    borderRadius: 22, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
   },
-  sendButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  missYouOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 77, 109, 0.9)',
+  effectContainer: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
-    elevation: 10,
   },
-  missYouText: {
-    fontSize: 40,
+  effectText: {
+    color: '#FFF',
+    fontSize: 32,
     fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
+    marginTop: 20,
   }
 });

@@ -1,202 +1,164 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal } from 'react-native';
-import { ref, push, onValue } from 'firebase/database';
-import { database } from '../config/firebase';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  TouchableOpacity, 
+  Image, 
+  Modal,
+  TextInput,
+  ScrollView
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import { subscribeToStories, addStory } from '../services/CoupleDataService';
+
+const COLORS = {
+  background: '#121212',
+  surface: '#1E1E1E',
+  primary: '#FF4B72',
+  text: '#FFFFFF',
+  textSec: '#A0A0A0',
+  border: '#333333'
+};
 
 export default function MemoriesScreen() {
-  const [memories, setMemories] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
+  const { coupleId } = useAuth();
+  const [stories, setStories] = useState([]);
+  const [isModalVisible, setIsModalVisible] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
 
-  const memoriesRef = ref(database, 'couple_data/memories');
-
   useEffect(() => {
-    const unsubscribe = onValue(memoriesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const memList = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        memList.sort((a, b) => b.timestamp - a.timestamp);
-        setMemories(memList);
-      }
-    });
+    if (coupleId) {
+      const unsubscribe = subscribeToStories(coupleId, (data) => {
+        setStories(data);
+      });
+      return unsubscribe;
+    }
+  }, [coupleId]);
 
-    return () => unsubscribe();
-  }, []);
-
-  const addMemory = async () => {
-    if (!newTitle.trim()) return;
-    
-    await push(memoriesRef, {
-      title: newTitle,
-      description: newDesc,
-      timestamp: Date.now()
-    });
-
+  const handleCreate = async () => {
+    if (newTitle.trim() === '') return;
+    await addStory(coupleId, newTitle, newDesc);
+    setIsModalVisible(false);
     setNewTitle('');
     setNewDesc('');
-    setModalVisible(false);
   };
 
-  const renderMemory = ({ item }) => {
-    const date = new Date(item.timestamp).toLocaleDateString();
-    return (
-      <View style={styles.memoryCard}>
-        <Text style={styles.memoryTitle}>{item.title}</Text>
-        <Text style={styles.memoryDate}>{date}</Text>
-        {item.description ? <Text style={styles.memoryDesc}>{item.description}</Text> : null}
-      </View>
-    );
-  };
+  const renderStory = ({ item }) => (
+    <View style={styles.storyCard}>
+       <View style={styles.cardHeader}>
+          <Text style={styles.storyTitle}>{item.title}</Text>
+          <Text style={styles.storyDate}>
+            {item.dateOccurred?.toDate ? item.dateOccurred.toDate().toLocaleDateString() : 'Just now'}
+          </Text>
+       </View>
+       {item.imageUrls && item.imageUrls.length > 0 ? (
+         <Image source={{ uri: item.imageUrls[0] }} style={styles.storyImage} />
+       ) : (
+         <View style={styles.placeholderImg}>
+            <Ionicons name="images" size={40} color={COLORS.border} />
+         </View>
+       )}
+       <Text style={styles.storyDesc}>{item.description}</Text>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Our Memories</Text>
+        <TouchableOpacity style={styles.addBtn} onPress={() => setIsModalVisible(true)}>
+           <Ionicons name="add" size={28} color="#FFF" />
+        </TouchableOpacity>
+      </View>
+
       <FlatList
-        data={memories}
-        keyExtractor={item => item.id}
-        renderItem={renderMemory}
-        contentContainerStyle={styles.list}
+        data={stories}
+        keyExtractor={(item) => item.id}
+        renderItem={renderStory}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="camera" size={60} color={COLORS.border} />
+            <Text style={styles.emptyText}>No memories yet. Create your first one!</Text>
+          </View>
+        }
       />
 
-      <TouchableOpacity 
-        style={styles.addButton} 
-        onPress={() => setModalVisible(true)}
-      >
-        <Text style={styles.addButtonText}>+</Text>
-      </TouchableOpacity>
+      <Modal visible={isModalVisible} animationType="slide" transparent>
+         <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+               <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>New Memory</Text>
+                  <TouchableOpacity onPress={() => setIsModalVisible(false)}>
+                     <Ionicons name="close" size={24} color="#FFF" />
+                  </TouchableOpacity>
+               </View>
+               
+               <ScrollView>
+                  <Text style={styles.label}>Title</Text>
+                  <TextInput 
+                    style={styles.input}
+                    placeholder="E.g. First Date at the Park"
+                    placeholderTextColor={COLORS.textSec}
+                    value={newTitle}
+                    onChangeText={setNewTitle}
+                  />
 
-      <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet">
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalHeader}>New Memory</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Title (e.g. Our first trip!)"
-            value={newTitle}
-            onChangeText={setNewTitle}
-          />
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            placeholder="Description..."
-            value={newDesc}
-            onChangeText={setNewDesc}
-            multiline
-          />
-          
-          <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.saveButton} onPress={addMemory}>
-              <Text style={styles.buttonText}>Save Memory</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={() => setModalVisible(false)}>
-              <Text style={styles.buttonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+                  <Text style={styles.label}>Description</Text>
+                  <TextInput 
+                    style={[styles.input, styles.textArea]}
+                    placeholder="Tell the story..."
+                    placeholderTextColor={COLORS.textSec}
+                    value={newDesc}
+                    onChangeText={setNewDesc}
+                    multiline
+                  />
+
+                  <TouchableOpacity style={styles.saveBtn} onPress={handleCreate}>
+                     <Text style={styles.saveBtnText}>Save Memory</Text>
+                  </TouchableOpacity>
+               </ScrollView>
+            </View>
+         </View>
       </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fffcfc',
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { 
+    height: 100, 
+    flexDirection: 'row',
+    justifyContent: 'space-between', 
+    alignItems: 'flex-end', 
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    backgroundColor: COLORS.surface
   },
-  list: {
-    padding: 20,
-  },
-  memoryCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 15,
-    marginBottom: 15,
-    shadowColor: '#ff4d6d',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  memoryTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
-  },
-  memoryDate: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 10,
-  },
-  memoryDesc: {
-    fontSize: 16,
-    color: '#666',
-  },
-  addButton: {
-    position: 'absolute',
-    bottom: 30,
-    right: 30,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#ff4d6d',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#ff4d6d',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 5,
-  },
-  addButtonText: {
-    fontSize: 30,
-    color: '#fff',
-    lineHeight: 32,
-  },
-  modalContainer: {
-    flex: 1,
-    padding: 30,
-    backgroundColor: '#fff',
-  },
-  modalHeader: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#ff4d6d',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
-    marginBottom: 15,
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  modalButtons: {
-    flexDirection: 'column',
-    gap: 10,
-  },
-  saveButton: {
-    backgroundColor: '#ff4d6d',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#999',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  }
+  headerTitle: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
+  addBtn: { backgroundColor: COLORS.primary, width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  listContent: { padding: 20 },
+  storyCard: { backgroundColor: COLORS.surface, borderRadius: 16, marginBottom: 20, overflow: 'hidden' },
+  cardHeader: { padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  storyTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  storyDate: { color: COLORS.textSec, fontSize: 12 },
+  storyImage: { width: '100%', height: 200, backgroundColor: '#333' },
+  placeholderImg: { width: '100%', height: 200, backgroundColor: '#1A1A1A', justifyContent: 'center', alignItems: 'center' },
+  storyDesc: { padding: 16, color: COLORS.textSec, lineHeight: 20 },
+  emptyContainer: { alignItems: 'center', marginTop: 100 },
+  emptyText: { color: COLORS.textSec, marginTop: 16, textAlign: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, height: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
+  label: { color: COLORS.textSec, marginBottom: 8, marginTop: 16 },
+  input: { backgroundColor: '#2A2A2A', borderRadius: 12, padding: 12, color: '#FFF' },
+  textArea: { height: 120, textAlignVertical: 'top' },
+  saveBtn: { backgroundColor: COLORS.primary, borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 32 },
+  saveBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 }
 });
